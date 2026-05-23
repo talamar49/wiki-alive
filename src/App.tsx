@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -27,8 +27,34 @@ type QuizQuestion = {
 const EXAMPLES = [
   'https://en.wikipedia.org/wiki/Napoleon',
   'https://he.wikipedia.org/wiki/דוד_בן-גוריון',
+  'https://he.wikipedia.org/wiki/משה_שרת',
   'https://en.wikipedia.org/wiki/Artificial_intelligence',
 ]
+
+function getInitialInput() {
+  if (typeof window === 'undefined') return EXAMPLES[2]
+  const path = decodeURIComponent(window.location.pathname)
+  const parts = path.split('/').filter(Boolean)
+
+  if (parts[0] === 'wiki' && parts[1]) {
+    const title = parts.slice(1).join('/').replaceAll(' ', '_')
+    const lang = /[א-ת]/.test(title) ? 'he' : 'en'
+    return `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`
+  }
+
+  if (parts[1] === 'wiki' && parts[0]?.length === 2 && parts[2]) {
+    const title = parts.slice(2).join('/').replaceAll(' ', '_')
+    return `https://${parts[0]}.wikipedia.org/wiki/${encodeURIComponent(title)}`
+  }
+
+  const urlParam = new URLSearchParams(window.location.search).get('url')
+  return urlParam || EXAMPLES[2]
+}
+
+function makeAlivePath(page: WikiPage) {
+  const title = encodeURIComponent(page.title.replaceAll(' ', '_'))
+  return page.lang === 'he' ? `/wiki/${title}` : `/${page.lang}/wiki/${title}`
+}
 
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'that', 'with', 'from', 'this', 'were', 'was', 'are', 'his', 'her', 'its', 'into', 'also',
@@ -170,7 +196,7 @@ function Loader() {
 }
 
 function App() {
-  const [input, setInput] = useState(EXAMPLES[0])
+  const [input, setInput] = useState(getInitialInput)
   const [page, setPage] = useState<WikiPage | null>(null)
   const [mode, setMode] = useState<Mode>('story')
   const [loading, setLoading] = useState(false)
@@ -182,15 +208,17 @@ function App() {
   const keywords = useMemo(() => page ? extractKeywords(page.extract) : [], [page])
   const chapters = useMemo(() => page ? storyChapters(page) : [], [page])
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault()
+  async function loadArticle(value: string, shouldPushUrl = true) {
     setLoading(true)
     setError('')
     setSelectedAnswers({})
     try {
-      const result = await fetchWiki(input)
+      const result = await fetchWiki(value)
       setPage(result)
       setMode('story')
+      if (shouldPushUrl && typeof window !== 'undefined') {
+        window.history.pushState({}, '', makeAlivePath(result))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'משהו נשבר')
     } finally {
@@ -198,111 +226,97 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadArticle(getInitialInput(), false)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault()
+    await loadArticle(input)
+  }
+
   const isRtl = page?.lang === 'he'
 
   return (
     <main className="min-h-screen overflow-hidden text-stone-950">
-      <section className="relative px-4 py-6 sm:px-6 lg:px-10">
-        <div className="mx-auto max-w-7xl">
-          <header className="mb-8 flex items-center justify-between gap-4 rounded-full border border-white/60 bg-white/55 px-4 py-3 shadow-lg shadow-stone-900/5 backdrop-blur">
-            <div className="flex items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-full bg-emerald-950 text-xl text-amber-100">W</div>
-              <div>
-                <p className="text-sm font-black tracking-tight">WikiAlive</p>
-                <p className="text-xs text-stone-600">Wikipedia → experience</p>
-              </div>
-            </div>
-            <a href="#demo" className="rounded-full bg-stone-950 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-900">
-              נסה עכשיו
-            </a>
-          </header>
-
-          <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="text-center lg:text-left">
-              <p className="mb-4 inline-flex rounded-full border border-emerald-800/20 bg-emerald-100 px-4 py-2 text-sm font-bold text-emerald-950">
-                ויקיפדיה, אבל חיה
-              </p>
-              <h1 className="mx-auto max-w-4xl text-5xl font-black leading-[0.95] tracking-[-0.05em] text-stone-950 sm:text-6xl lg:mx-0 lg:text-7xl">
-                הופכים ערך משעמם למסע אינטראקטיבי.
-              </h1>
-              <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-stone-700 lg:mx-0">
-                הדבק קישור ויקיפדיה. WikiAlive מחלץ את הערך, בונה תקציר, סיפור, ציר זמן, מושגים וקוויז — בלי הרשמה ובלי כאב ראש.
-              </p>
-              <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
-                {['Story mode', 'Timeline', 'Quiz', 'Concept cards'].map((item) => (
-                  <span key={item} className="rounded-full border border-stone-900/10 bg-white/70 px-4 py-2 text-sm font-bold text-stone-700">
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="relative">
-              <div className="absolute -inset-6 rounded-[3rem] bg-gradient-to-br from-amber-300/40 via-emerald-300/30 to-purple-300/40 blur-3xl" />
-              <div className="relative rounded-[2rem] border border-white/70 bg-white/75 p-5 shadow-2xl shadow-stone-900/10 backdrop-blur">
-                <div className="mb-4 flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-full bg-red-400" />
-                  <span className="h-3 w-3 rounded-full bg-amber-400" />
-                  <span className="h-3 w-3 rounded-full bg-emerald-400" />
-                </div>
-                <div className="rounded-[1.5rem] bg-stone-950 p-5 text-left text-amber-50">
-                  <p className="mb-3 text-xs uppercase tracking-[0.25em] text-emerald-200">input</p>
-                  <p className="break-all text-sm text-stone-300">https://en.wikipedia.org/wiki/Napoleon</p>
-                  <div className="my-5 h-px bg-white/10" />
-                  <p className="mb-3 text-xs uppercase tracking-[0.25em] text-amber-200">output</p>
-                  <div className="space-y-3">
-                    <div className="rounded-2xl bg-white/10 p-4">
-                      <p className="font-bold">פרק 1: עלייה מהירה</p>
-                      <p className="mt-1 text-sm text-stone-300">הערך הופך לסיפור עם נקודות מפנה.</p>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                      <div className="rounded-xl bg-emerald-400/20 p-3">ציר זמן</div>
-                      <div className="rounded-xl bg-amber-400/20 p-3">מושגים</div>
-                      <div className="rounded-xl bg-purple-400/20 p-3">קוויז</div>
-                    </div>
-                  </div>
+      <section id="demo" className="relative px-3 pt-3 sm:px-6 sm:pt-6 lg:px-10">
+        <div className="mx-auto max-w-4xl">
+          <div className="rounded-[2rem] border border-white/70 bg-white/80 p-3 shadow-2xl shadow-stone-900/10 backdrop-blur sm:p-5">
+            <div className="mb-3 flex items-center justify-between gap-3 px-1">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-950 text-lg font-black text-amber-100">W</div>
+                <div>
+                  <p className="text-sm font-black tracking-tight">WikiAlive</p>
+                  <p className="text-xs font-semibold text-stone-600">הדבק קישור ויקיפדיה → קבל חוויה</p>
                 </div>
               </div>
+              {page && <span className="hidden rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-950 sm:inline-flex">{page.lang.toUpperCase()}</span>}
             </div>
+
+            <form onSubmit={onSubmit} className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <label className="sr-only" htmlFor="wiki-url">Wikipedia URL</label>
+              <input
+                id="wiki-url"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="https://he.wikipedia.org/wiki/משה_שרת"
+                inputMode="url"
+                autoCapitalize="none"
+                className="min-h-14 w-full rounded-2xl border border-stone-900/10 bg-white px-4 text-sm font-bold outline-none ring-emerald-700/20 transition focus:ring-4 sm:text-base"
+              />
+              <button className="min-h-14 rounded-2xl bg-emerald-950 px-6 text-base font-black text-white shadow-lg shadow-emerald-950/20 transition active:scale-[0.98] sm:hover:-translate-y-0.5 sm:hover:bg-emerald-800">
+                פתח WikiAlive
+              </button>
+            </form>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+              {EXAMPLES.map((example) => (
+                <button
+                  key={example}
+                  onClick={() => { setInput(example); void loadArticle(example) }}
+                  className="min-h-11 rounded-2xl bg-stone-950/5 px-3 py-2 text-xs font-black text-stone-700 transition hover:bg-stone-950/10"
+                >
+                  {example.includes('משה') ? 'משה שרת' : example.includes('דוד') ? 'דוד בן־גוריון' : example.split('/').pop()?.replaceAll('_', ' ')}
+                </button>
+              ))}
+            </div>
+
+            <p className="mt-4 text-center text-xs font-bold leading-5 text-stone-600">
+              אפשר גם לפתוח ישירות: <span className="break-all text-emerald-900">wiki-alive.vercel.app/wiki/משה_שרת</span>
+            </p>
+          </div>
+
+          <div className="py-6 text-center sm:py-10">
+            <p className="mb-3 inline-flex rounded-full border border-emerald-800/20 bg-emerald-100 px-4 py-2 text-xs font-black text-emerald-950">
+              ויקיפדיה, אבל חיה
+            </p>
+            <h1 className="mx-auto max-w-3xl text-4xl font-black leading-[0.95] tracking-[-0.05em] text-stone-950 sm:text-6xl">
+              ערך ויקיפדיה נכנס. מסע אינטראקטיבי יוצא.
+            </h1>
+            <p className="mx-auto mt-4 max-w-2xl text-base font-semibold leading-7 text-stone-700 sm:text-lg">
+              תקציר, סיפור, ציר זמן, מושגים וקוויז — מותאם למובייל, בלי הרשמה.
+            </p>
           </div>
         </div>
       </section>
 
-      <section id="demo" className="px-4 pb-16 sm:px-6 lg:px-10">
-        <div className="mx-auto max-w-7xl rounded-[2.5rem] border border-white/70 bg-white/65 p-4 shadow-2xl shadow-stone-900/8 backdrop-blur sm:p-6 lg:p-8">
-          <form onSubmit={onSubmit} className="grid gap-3 lg:grid-cols-[1fr_auto]">
-            <label className="sr-only" htmlFor="wiki-url">Wikipedia URL</label>
-            <input
-              id="wiki-url"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder="הדבק קישור ויקיפדיה או שם ערך"
-              className="min-h-14 w-full rounded-2xl border border-stone-900/10 bg-white px-5 text-base font-semibold outline-none ring-emerald-700/20 transition focus:ring-4"
-            />
-            <button className="min-h-14 rounded-2xl bg-emerald-950 px-8 font-black text-white shadow-lg shadow-emerald-950/20 transition hover:-translate-y-0.5 hover:bg-emerald-800">
-              הפוך למעניין
-            </button>
-          </form>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {EXAMPLES.map((example) => (
-              <button key={example} onClick={() => setInput(example)} className="rounded-full bg-stone-950/5 px-3 py-2 text-xs font-bold text-stone-700 hover:bg-stone-950/10">
-                {example.includes('he.') ? 'דוגמה עברית' : example.split('/').pop()?.replaceAll('_', ' ')}
-              </button>
-            ))}
-          </div>
-
-          {error && <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 font-bold text-red-800">{error}</div>}
-          {loading && <div className="mt-8"><Loader /></div>}
+      <section className="px-3 pb-20 sm:px-6 lg:px-10">
+        <div className="mx-auto max-w-7xl rounded-[2rem] border border-white/70 bg-white/65 p-3 shadow-2xl shadow-stone-900/8 backdrop-blur sm:rounded-[2.5rem] sm:p-6 lg:p-8">
+          {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 font-bold text-red-800">{error}</div>}
+          {loading && <div className="mt-3"><Loader /></div>}
 
           {page && !loading && (
-            <article dir={isRtl ? 'rtl' : 'ltr'} className="mt-8 grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+            <article dir={isRtl ? 'rtl' : 'ltr'} className="mt-3 grid gap-4 lg:grid-cols-[0.85fr_1.15fr] lg:gap-6">
               <aside className="space-y-6">
                 <div className="overflow-hidden rounded-[2rem] border border-stone-900/10 bg-white shadow-xl shadow-stone-900/5">
-                  {page.thumbnail?.source && <img src={page.thumbnail.source} alt="" className="h-64 w-full object-cover" />}
-                  <div className="p-6">
+                  {page.thumbnail?.source && <img src={page.thumbnail.source} alt="" className="h-44 w-full object-cover sm:h-64" />}
+                  <div className="p-4 sm:p-6">
                     <p className="text-sm font-black text-emerald-800">מקור: Wikipedia</p>
-                    <h2 className="mt-2 text-4xl font-black tracking-tight text-stone-950">{page.title}</h2>
-                    <p className="mt-4 leading-8 text-stone-700">{makeSummary(page)}</p>
+                    <h2 className="mt-2 text-3xl font-black tracking-tight text-stone-950 sm:text-4xl">{page.title}</h2>
+                    <p className="mt-4 text-sm leading-7 text-stone-700 sm:text-base sm:leading-8">{makeSummary(page)}</p>
                     {page.fullurl && (
                       <a href={page.fullurl} target="_blank" className="mt-5 inline-flex rounded-full bg-stone-950 px-5 py-3 text-sm font-bold text-white" rel="noreferrer">
                         פתח מקור
@@ -320,8 +334,8 @@ function App() {
                 </div>
               </aside>
 
-              <section className="rounded-[2rem] border border-stone-900/10 bg-white p-4 shadow-xl shadow-stone-900/5 sm:p-6">
-                <div className="mb-6 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <section className="rounded-[2rem] border border-stone-900/10 bg-white p-3 shadow-xl shadow-stone-900/5 sm:p-6">
+                <div className="sticky top-2 z-10 mb-4 grid grid-cols-4 gap-1 rounded-2xl bg-white/90 p-1 shadow-lg shadow-stone-900/10 backdrop-blur md:mb-6 md:gap-2 md:bg-transparent md:p-0 md:shadow-none">
                   {([
                     ['story', 'Story'],
                     ['timeline', 'Timeline'],
@@ -331,7 +345,7 @@ function App() {
                     <button
                       key={key}
                       onClick={() => setMode(key)}
-                      className={`rounded-2xl px-4 py-3 text-sm font-black transition ${mode === key ? 'bg-emerald-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
+                      className={`min-h-11 rounded-xl px-2 py-2 text-xs font-black transition sm:rounded-2xl sm:px-4 sm:py-3 sm:text-sm ${mode === key ? 'bg-emerald-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
                     >
                       {label}
                     </button>
